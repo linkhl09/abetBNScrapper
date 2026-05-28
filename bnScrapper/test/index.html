@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Brightspace Submission Scraper</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0d14;
+      --bg2: #111520;
+      --card: #161c2e;
+      --card2: #1e2740;
+      --accent: #4f8ef7;
+      --accent2: #7c5af7;
+      --green: #22d3a0;
+      --yellow: #f0c050;
+      --red: #f05060;
+      --text: #e2e8f8;
+      --muted: #8493b5;
+      --border: rgba(79, 142, 247, 0.18);
+      --radius: 16px;
+      --glow: 0 0 40px rgba(79, 142, 247, 0.15);
+    }
+
+    html { font-size: 16px; font-family: 'Inter', sans-serif; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 40px 20px 80px;
+    }
+
+    /* ── Header ── */
+    .header {
+      text-align: center;
+      margin-bottom: 48px;
+      animation: fadeUp .6s ease both;
+    }
+    .header .badge {
+      display: inline-block;
+      background: linear-gradient(135deg, rgba(79,142,247,.2), rgba(124,90,247,.2));
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 6px 18px;
+      font-size: .78rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 20px;
+    }
+    .header h1 {
+      font-size: clamp(2rem, 5vw, 3rem);
+      font-weight: 700;
+      background: linear-gradient(135deg, #e2e8f8 30%, var(--accent) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      line-height: 1.2;
+      margin-bottom: 16px;
+    }
+    .header p {
+      color: var(--muted);
+      font-size: 1rem;
+      max-width: 520px;
+      margin: 0 auto;
+      line-height: 1.7;
+    }
+
+    /* ── Cards grid ── */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+      width: 100%;
+      max-width: 900px;
+      margin-bottom: 32px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      box-shadow: var(--glow);
+      transition: transform .25s, box-shadow .25s;
+      animation: fadeUp .6s ease both;
+    }
+    .card:hover { transform: translateY(-4px); box-shadow: 0 0 60px rgba(79,142,247,.25); }
+    .card:nth-child(2) { animation-delay: .1s; }
+
+    .card-icon {
+      width: 48px; height: 48px;
+      border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.5rem;
+      margin-bottom: 16px;
+    }
+    .card-icon.blue { background: rgba(79,142,247,.15); }
+    .card-icon.purple { background: rgba(124,90,247,.15); }
+
+    .card h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: 10px; }
+    .card p { color: var(--muted); font-size: .9rem; line-height: 1.65; margin-bottom: 20px; }
+
+    .tag-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+    .tag {
+      background: var(--card2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 4px 12px;
+      font-size: .78rem;
+      color: var(--muted);
+    }
+    .tag.green { color: var(--green); border-color: rgba(34,211,160,.3); background: rgba(34,211,160,.07); }
+    .tag.yellow { color: var(--yellow); border-color: rgba(240,192,80,.3); background: rgba(240,192,80,.07); }
+
+    /* ── Steps ── */
+    .steps-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px;
+      width: 100%;
+      max-width: 900px;
+      margin-bottom: 24px;
+      animation: fadeUp .6s .2s ease both;
+    }
+    .steps-card h2 { font-size: 1.2rem; font-weight: 600; margin-bottom: 24px; color: var(--text); }
+
+    .steps { display: flex; flex-direction: column; gap: 16px; }
+    .step {
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+    }
+    .step-num {
+      width: 32px; height: 32px; min-width: 32px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      display: flex; align-items: center; justify-content: center;
+      font-size: .8rem; font-weight: 700; color: #fff;
+    }
+    .step-body { flex: 1; }
+    .step-body strong { display: block; font-weight: 600; margin-bottom: 4px; font-size: .95rem; }
+    .step-body span { color: var(--muted); font-size: .88rem; line-height: 1.6; }
+
+    /* ── Code block ── */
+    .code-wrap {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px;
+      width: 100%;
+      max-width: 900px;
+      margin-bottom: 24px;
+      animation: fadeUp .6s .3s ease both;
+    }
+    .code-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+    .code-header h2 { font-size: 1.1rem; font-weight: 600; }
+
+    .copy-btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border: none; border-radius: 10px;
+      padding: 10px 20px;
+      color: #fff; font-size: .88rem; font-weight: 600;
+      cursor: pointer;
+      transition: opacity .2s, transform .15s;
+    }
+    .copy-btn:hover { opacity: .88; transform: scale(1.03); }
+    .copy-btn:active { transform: scale(.97); }
+    .copy-btn.copied { background: linear-gradient(135deg, var(--green), #1aa88a); }
+
+    pre {
+      background: var(--bg2);
+      border: 1px solid rgba(255,255,255,.06);
+      border-radius: 12px;
+      padding: 20px;
+      overflow-x: auto;
+      font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+      font-size: .82rem;
+      line-height: 1.7;
+      color: #a9c2f7;
+      max-height: 420px;
+    }
+
+    /* ── Output table ── */
+    .output-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px;
+      width: 100%;
+      max-width: 900px;
+      animation: fadeUp .6s .4s ease both;
+      display: none;
+    }
+    .output-card.visible { display: block; }
+    .output-card h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: 20px; }
+
+    .results-table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    .results-table th {
+      text-align: left;
+      padding: 10px 16px;
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      color: var(--muted);
+      font-weight: 500;
+    }
+    .results-table td {
+      padding: 10px 16px;
+      border-bottom: 1px solid rgba(255,255,255,.04);
+    }
+    .results-table tr:last-child td { border-bottom: none; }
+    .results-table tr:hover td { background: rgba(255,255,255,.02); }
+
+    .pill {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 10px;
+      font-size: .78rem;
+      font-weight: 600;
+    }
+    .pill.yes { background: rgba(34,211,160,.12); color: var(--green); }
+    .pill.no  { background: rgba(240,80,96,.12); color: var(--red); }
+
+    /* ── Animations ── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      .code-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="badge">🎓 Brightspace Tool</div>
+    <h1>Submission Scraper</h1>
+    <p>Extrae automáticamente el listado de envíos de actividades en Brightspace: nombre, estado de entrega y evaluación. Funciona con actividades individuales y grupales.</p>
+  </div>
+
+  <!-- Feature cards -->
+  <div class="grid">
+    <div class="card">
+      <div class="card-icon blue">👤</div>
+      <h2>Actividades Individuales</h2>
+      <p>Extrae el nombre de cada estudiante, si entregó la actividad y si ya fue evaluada por el calificador.</p>
+      <div class="tag-row">
+        <span class="tag green">✓ Nombre</span>
+        <span class="tag green">✓ Enviado</span>
+        <span class="tag green">✓ Evaluado</span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-icon purple">👥</div>
+      <h2>Actividades Grupales</h2>
+      <p>Extrae el nombre del grupo, lista los miembros que aparecen en los comentarios del envío, y detecta si fue evaluado.</p>
+      <div class="tag-row">
+        <span class="tag green">✓ Nombre grupo</span>
+        <span class="tag green">✓ Miembros</span>
+        <span class="tag yellow">✓ Enviado / Evaluado</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Instructions -->
+  <div class="steps-card">
+    <h2>📋 Instrucciones de uso (Sin extensiones)</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <strong>Navega a la página 1 en Brightspace</strong>
+          <span>Abre tu actividad en Brightspace, ve al listado de entregas y colócate en la <strong>Página 1</strong>.</span>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <strong>Abre la consola y ejecuta el Script</strong>
+          <span>Presiona <kbd>F12</kbd> (Consola), haz clic en "Copiar script" abajo, pégalo en la consola y presiona <kbd>Enter</kbd>. El script guardará la primera página y te llevará automáticamente a la siguiente.</span>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <strong>Avanza páginas presionando Flecha Arriba + Enter</strong>
+          <span>Cuando cargue la siguiente página, haz clic en la consola, presiona la tecla **Flecha Arriba (↑)** de tu teclado (para re-seleccionar el script) y presiona **Enter**.</span>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <strong>Descarga el CSV consolidado al terminar</strong>
+          <span>Repite el paso anterior en cada página. En la última página, al presionar **Enter** por última vez, se descargará automáticamente un único CSV consolidador con todos tus estudiantes.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Script code -->
+  <div class="code-wrap">
+    <div class="code-header">
+      <h2>🚀 Script (pegar en la consola)</h2>
+      <button class="copy-btn" id="copyBtn" onclick="copyScript()">
+        📋 Copiar script
+      </button>
+    </div>
+    <pre id="scriptCode">Cargando script...</pre>
+  </div>
+
+  <!-- Live demo output (populated if run locally) -->
+  <div class="output-card" id="outputCard">
+    <h2>📊 Resultados (demo)</h2>
+    <table class="results-table" id="resultsTable">
+      <thead>
+        <tr>
+          <th>Nombre</th>
+          <th>Enviado</th>
+          <th>Evaluado</th>
+        </tr>
+      </thead>
+      <tbody id="resultsTbody"></tbody>
+    </table>
+  </div>
+
+  <script>
+    // ── Load and display the scraper script ──────────────────────────────────
+    const scriptCode = document.getElementById('scriptCode');
+    const scraperText = `(function () {
+  'use strict';
+
+  function cleanText(el) {
+    return el ? el.textContent.trim().replace(/\\s+/g, ' ') : '';
+  }
+
+  const isGroup = !!document.querySelector('[name="restrictGroups"]');
+  const pageSelect = document.querySelector('select[name*="_pg"]:not([name*="pgS"]):not([name*="pgs"])');
+
+  const titleEl = document.getElementById('d_page_title');
+  let activityTitle = titleEl ? cleanText(titleEl) : '';
+  activityTitle = activityTitle.replace(/\\s*-\\s*(Envíos en carpeta|Folder Submissions|Submissions|Envíos)\\s*/i, '');
+  if (!activityTitle) {
+    activityTitle = document.title || 'submissions';
+  }
+  const safeFilename = activityTitle.replace(/[^a-zA-Z0-9_ -]/g, '').trim() || 'submissions';
+
+  function extractCurrentPageRows() {
+    const table = document.querySelector('table[type="data"]');
+    if (!table) return [];
+
+    const rows = Array.from(table.querySelectorAll('tr.d_ggl2'));
+    const pageResults = [];
+
+    rows.forEach((headerRow) => {
+      const nameLink = headerRow.querySelector('td.dlay_l a');
+      const name = nameLink ? cleanText(nameLink) : '(unknown)';
+
+      const tooltipSpan = headerRow.querySelector('td.dlay_r d2l-tooltip-help span');
+      let evaluated = false;
+      if (tooltipSpan) {
+        const txt = cleanText(tooltipSpan);
+        evaluated = txt.startsWith('Guardado') && txt.replace('Guardado', '').trim().length > 0;
+      }
+
+      let submitted = false;
+      let nextSibling = headerRow.nextElementSibling;
+      while (nextSibling && !nextSibling.classList.contains('d_ggl2')) {
+        const dateLabel = nextSibling.querySelector('td.d_gc label');
+        if (dateLabel && cleanText(dateLabel).length > 0) {
+          submitted = true;
+          break;
+        }
+        nextSibling = nextSibling.nextElementSibling;
+      }
+
+      let members = [];
+      if (isGroup) {
+        let sibling = headerRow.nextElementSibling;
+        while (sibling && !sibling.classList.contains('d_ggl2')) {
+          const memberLink = sibling.querySelector('th.d_gn a');
+          if (memberLink) {
+            const memberName = cleanText(memberLink);
+            if (memberName && !members.includes(memberName)) {
+              members.push(memberName);
+            }
+          }
+          sibling = sibling.nextElementSibling;
+        }
+      }
+
+      const entry = { name, submitted, evaluated };
+      if (isGroup) {
+        entry.type = 'group';
+        entry.members = members;
+      } else {
+        entry.type = 'individual';
+      }
+
+      pageResults.push(entry);
+    });
+
+    return pageResults;
+  }
+
+  function downloadCSV(data) {
+    function toCSV(data, isGroup) {
+      const headers = isGroup
+        ? ['Nombre/Grupo', 'Enviado', 'Evaluado', 'Miembros']
+        : ['Nombre', 'Enviado', 'Evaluado'];
+
+      const rows = data.map((r) => {
+        const base = [
+          \`"\${r.name.replace(/"/g, '""')}"\`,
+          r.submitted ? 'Sí' : 'No',
+          r.evaluated ? 'Sí' : 'No',
+        ];
+        if (isGroup) {
+          base.push(\`"\${(r.members || []).join('; ').replace(/"/g, '""')}"\`);
+        }
+        return base.join(',');
+      });
+
+      return [headers.join(','), ...rows].join('\\n');
+    }
+
+    const csv = toCSV(data, isGroup);
+    const blob = new Blob(['\\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = \`\${safeFilename}.csv\`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  const isRunning = sessionStorage.getItem('__d2l_scraper_running') === 'true';
+
+  if (!isRunning) {
+    console.log('%c[Scraper] Iniciando nueva sesión de extracción...', 'color: #4f8ef7; font-weight: bold;');
+    
+    const results = [];
+    sessionStorage.setItem('__d2l_scraper_running', 'true');
+    sessionStorage.setItem('__d2l_scraper_results', JSON.stringify(results));
+
+    const pageRows = extractCurrentPageRows();
+    results.push(...pageRows);
+    sessionStorage.setItem('__d2l_scraper_results', JSON.stringify(results));
+
+    if (pageSelect && pageSelect.options.length > 1) {
+      console.log('%c[Scraper] Página 1 guardada. Cambiando a la Página 2...', 'color: #7c5af7;');
+      pageSelect.selectedIndex = 1;
+      pageSelect.dispatchEvent(new Event('change'));
+      console.log('%c👉 Cuando cargue la Página 2, pulsa Flecha Arriba (↑) + Enter en la consola.', 'color: #f0c050; font-weight: bold;');
+    } else {
+      console.log('%c[Scraper] Extracción finalizada (Página única). Descargando...', 'color: #22d3a0; font-weight: bold;');
+      downloadCSV(results);
+      sessionStorage.removeItem('__d2l_scraper_running');
+      sessionStorage.removeItem('__d2l_scraper_results');
+    }
+  } else {
+    const results = JSON.parse(sessionStorage.getItem('__d2l_scraper_results') || '[]');
+    const currentPageIndex = pageSelect ? pageSelect.selectedIndex : 0;
+    const totalPages = pageSelect ? pageSelect.options.length : 1;
+
+    console.log(\`%c[Scraper] Continuando sesión. Escaneando Página \${currentPageIndex + 1} de \${totalPages}...\`, 'color: #4f8ef7;');
+    const pageRows = extractCurrentPageRows();
+
+    pageRows.forEach(row => {
+      if (!results.some(r => r.name === row.name)) {
+        results.push(row);
+      }
+    });
+
+    sessionStorage.setItem('__d2l_scraper_results', JSON.stringify(results));
+
+    if (pageSelect && currentPageIndex < totalPages - 1) {
+      console.log(\`%c[Scraper] Página \${currentPageIndex + 1} guardada. Cambiando a la Página \${currentPageIndex + 2}... \`, 'color: #7c5af7;');
+      pageSelect.selectedIndex = currentPageIndex + 1;
+      pageSelect.dispatchEvent(new Event('change'));
+      console.log(\`%c👉 Cuando cargue la Página \${currentPageIndex + 2}, pulsa Flecha Arriba (↑) + Enter en la consola.\`, 'color: #f0c050; font-weight: bold;');
+    } else {
+      console.log('%c[Scraper] ¡Todas las páginas escaneadas correctamente!', 'color: #22d3a0; font-weight: bold;');
+      downloadCSV(results);
+
+      sessionStorage.removeItem('__d2l_scraper_running');
+      sessionStorage.removeItem('__d2l_scraper_results');
+      console.log('[Scraper] Sesión y memoria limpiadas con éxito.');
+    }
+  }
+})();`;
+
+    scriptCode.textContent = scraperText;
+
+    // ── Copy button ──────────────────────────────────────────────────────────
+    function copyScript() {
+      navigator.clipboard.writeText(scraperText).then(() => {
+        const btn = document.getElementById('copyBtn');
+        btn.textContent = '✅ ¡Copiado!';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.textContent = '📋 Copiar script';
+          btn.classList.remove('copied');
+        }, 2500);
+      });
+    }
+    window.copyScript = copyScript;
+  </script>
+</body>
+</html>

@@ -1,8 +1,8 @@
 # Script related files to avoid uploading
-.jpg
-.jpeg
-.xlsx
-.csv
+*.jpg
+*.jpeg
+*.xlsx
+*.csv
 
 
 # Byte-compiled / optimized / DLL files
