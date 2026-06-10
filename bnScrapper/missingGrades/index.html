@@ -283,34 +283,34 @@
 
   <!-- Instructions -->
   <div class="steps-card">
-    <h2>📋 Instrucciones de uso</h2>
+    <h2>📋 Instrucciones de uso (Sin extensiones)</h2>
     <div class="steps">
       <div class="step">
         <div class="step-num">1</div>
         <div class="step-body">
-          <strong>Navega a la página de envíos en Brightspace</strong>
-          <span>Abre la carpeta de actividad y asegúrate de que se muestren <em>todos los estudiantes</em> (sin filtros activos).</span>
+          <strong>Navega a la página 1 en Brightspace</strong>
+          <span>Abre tu actividad en Brightspace, ve al listado de entregas y colócate en la <strong>Página 1</strong>.</span>
         </div>
       </div>
       <div class="step">
         <div class="step-num">2</div>
         <div class="step-body">
-          <strong>Abre la consola del navegador</strong>
-          <span>Presiona <kbd>F12</kbd> → pestaña <strong>Console</strong>. En Chrome también puedes usar <kbd>Ctrl+Shift+J</kbd>.</span>
+          <strong>Abre la consola y ejecuta el Script</strong>
+          <span>Presiona <kbd>F12</kbd> (Consola), haz clic en "Copiar script" abajo, pégalo en la consola y presiona <kbd>Enter</kbd>. El script guardará la primera página y te llevará automáticamente a la siguiente.</span>
         </div>
       </div>
       <div class="step">
         <div class="step-num">3</div>
         <div class="step-body">
-          <strong>Copia y pega el script</strong>
-          <span>Haz clic en "Copiar script" abajo, pégalo en la consola y presiona <kbd>Enter</kbd>.</span>
+          <strong>Avanza páginas presionando Flecha Arriba + Enter</strong>
+          <span>Cuando cargue la siguiente página, haz clic en la consola, presiona la tecla **Flecha Arriba (↑)** de tu teclado (para re-seleccionar el script) y presiona **Enter**.</span>
         </div>
       </div>
       <div class="step">
         <div class="step-num">4</div>
         <div class="step-body">
-          <strong>Descarga el CSV</strong>
-          <span>El archivo CSV se descarga automáticamente. También puedes ver los resultados en la consola con <code>console.table()</code> y en <code>window.__scraperResults</code>.</span>
+          <strong>Descarga el CSV consolidado al terminar</strong>
+          <span>Repite el paso anterior en cada página. En la última página, al presionar **Enter** por última vez, se descargará automáticamente un único CSV consolidador con todos tus estudiantes.</span>
         </div>
       </div>
     </div>
@@ -348,92 +348,189 @@
     const scraperText = `(function () {
   'use strict';
 
+  // ── Helper: strip and clean inner text ──────────────────────────────────────
   function cleanText(el) {
     return el ? el.textContent.trim().replace(/\\s+/g, ' ') : '';
   }
 
+  // ── Detect activity type ─────────────────────────────────────────────────────
   const isGroup = !!document.querySelector('[name="restrictGroups"]');
-  const table = document.querySelector('table[type="data"]');
+  const pageSelect = document.querySelector('select[name*="_pg"]:not([name*="pgS"]):not([name*="pgs"])');
 
-  if (!table) {
-    console.error('[Scraper] No se encontró la tabla. ¿Estás en la página correcta?');
-    return;
+  // ── Activity Title ──────────────────────────────────────────────────────────
+  const titleEl = document.getElementById('d_page_title');
+  let activityTitle = titleEl ? cleanText(titleEl) : '';
+  activityTitle = activityTitle.replace(/\\s*-\\s*(Envíos en carpeta|Folder Submissions|Submissions|Envíos)\\s*/i, '');
+  if (!activityTitle) {
+    activityTitle = document.title || 'submissions';
   }
+  const safeFilename = activityTitle.replace(/[^a-zA-Z0-9_ -]/g, '').trim() || 'submissions';
 
-  const rows = Array.from(table.querySelectorAll('tr.d_ggl2'));
-  if (rows.length === 0) {
-    console.warn('[Scraper] No se encontraron filas. Verifica que no haya filtros activos.');
-    return;
-  }
+  // ── Scraper Core logic ───────────────────────────────────────────────────────
+  function extractCurrentPageRows() {
+    const table = document.querySelector('table[type="data"]');
+    if (!table) return [];
 
-  const results = [];
+    const rows = Array.from(table.querySelectorAll('tr.d_ggl2'));
+    const pageResults = [];
 
-  rows.forEach((headerRow) => {
-    // 1. Nombre
-    const nameLink = headerRow.querySelector('td.dlay_l a');
-    const name = nameLink ? cleanText(nameLink) : '(desconocido)';
+    rows.forEach((headerRow) => {
+      // 1. Name (Student or Group)
+      const nameLink = headerRow.querySelector('td.dlay_l a');
+      const name = nameLink ? cleanText(nameLink) : '(unknown)';
 
-    // 2. Evaluado
-    const tooltipSpan = headerRow.querySelector('td.dlay_r d2l-tooltip-help span');
-    let evaluated = false;
-    if (tooltipSpan) {
-      const txt = cleanText(tooltipSpan);
-      evaluated = txt.startsWith('Guardado') && txt.replace('Guardado', '').trim().length > 0;
-    }
-
-    // 3. Enviado
-    let submitted = false;
-    let next = headerRow.nextElementSibling;
-    while (next && !next.classList.contains('d_ggl2')) {
-      const label = next.querySelector('td.d_gc label');
-      if (label && cleanText(label).length > 0) { submitted = true; break; }
-      next = next.nextElementSibling;
-    }
-
-    // 4. Miembros de grupo
-    let members = [];
-    if (isGroup) {
-      let sib = headerRow.nextElementSibling;
-      while (sib && !sib.classList.contains('d_ggl2')) {
-        const ml = sib.querySelector('th.d_gn a');
-        if (ml) { const n = cleanText(ml); if (n && !members.includes(n)) members.push(n); }
-        sib = sib.nextElementSibling;
+      // 2. Evaluated Status
+      const tooltipHelp = headerRow.querySelector('td.dlay_r d2l-tooltip-help');
+      let evaluated = false;
+      if (tooltipHelp) {
+        const tooltipSpan = tooltipHelp.querySelector('span');
+        const txt = tooltipSpan ? cleanText(tooltipSpan) : '';
+        const attrTxt = tooltipHelp.getAttribute('text') || '';
+        const combinedTxt = (txt + ' ' + attrTxt).toLowerCase();
+        evaluated = combinedTxt.includes('guardado') ||
+          combinedTxt.includes('publicad') ||
+          combinedTxt.includes('evaluad');
       }
-    }
 
-    const entry = { name, submitted, evaluated };
-    if (isGroup) { entry.type = 'group'; entry.members = members; }
-    else { entry.type = 'individual'; }
-    results.push(entry);
-  });
+      // 3. Delivery Status
+      let submitted = false;
+      let nextSibling = headerRow.nextElementSibling;
+      while (nextSibling && !nextSibling.classList.contains('d_ggl2')) {
+        const dateLabel = nextSibling.querySelector('td.d_gc label');
+        if (dateLabel && cleanText(dateLabel).length > 0) {
+          submitted = true;
+          break;
+        }
+        nextSibling = nextSibling.nextElementSibling;
+      }
 
-  console.group('[Scraper] Resultados (' + (isGroup ? 'Grupal' : 'Individual') + ') — ' + results.length + ' entradas');
-  console.table(results);
-  console.groupEnd();
+      // 4. Group Members (Group activities only)
+      let members = [];
+      if (isGroup) {
+        let sibling = headerRow.nextElementSibling;
+        while (sibling && !sibling.classList.contains('d_ggl2')) {
+          const memberLink = sibling.querySelector('th.d_gn a');
+          if (memberLink) {
+            const memberName = cleanText(memberLink);
+            if (memberName && !members.includes(memberName)) {
+              members.push(memberName);
+            }
+          }
+          sibling = sibling.nextElementSibling;
+        }
+      }
 
-  // CSV
-  function toCSV(data, isGroup) {
-    const h = isGroup
-      ? ['Nombre/Grupo','Enviado','Evaluado','Miembros']
-      : ['Nombre','Enviado','Evaluado'];
-    const r = data.map(e => {
-      const b = ['"'+e.name.replace(/"/g,'""')+'"', e.submitted?'Sí':'No', e.evaluated?'Sí':'No'];
-      if (isGroup) b.push('"'+((e.members||[]).join('; ')).replace(/"/g,'""')+'"');
-      return b.join(',');
+      const entry = { name, submitted, evaluated };
+      if (isGroup) {
+        entry.type = 'group';
+        entry.members = members;
+      } else {
+        entry.type = 'individual';
+      }
+
+      pageResults.push(entry);
     });
-    return [h.join(','), ...r].join('\\n');
+
+    return pageResults;
   }
 
-  const csv = toCSV(results, isGroup);
-  const blob = new Blob(['\\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'envios_' + (isGroup?'grupal':'individual') + '_' + Date.now() + '.csv';
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  console.log('[Scraper] CSV descargado. Datos en window.__scraperResults');
-  window.__scraperResults = results;
-  return results;
+  // ── CSV Generator & Downloader ───────────────────────────────────────────────
+  function downloadCSV(data) {
+    function toCSV(data, isGroup) {
+      const headers = isGroup
+        ? ['Nombre/Grupo', 'Enviado', 'Evaluado', 'Miembros']
+        : ['Nombre', 'Enviado', 'Evaluado'];
+
+      const rows = data.map((r) => {
+        const base = [
+          \`"\${r.name.replace(/"/g, '""')}"\`,
+          r.submitted ? 'Sí' : 'No',
+          r.evaluated ? 'Sí' : 'No',
+        ];
+        if (isGroup) {
+          base.push(\`"\${(r.members || []).join('; ').replace(/"/g, '""')}"\`);
+        }
+        return base.join(',');
+      });
+
+      return [headers.join(','), ...rows].join('\\n');
+    }
+
+    const csv = toCSV(data, isGroup);
+    const blob = new Blob(['\\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = \`\${safeFilename}.csv\`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  // ── Session Flow ─────────────────────────────────────────────────────────────
+  const isRunning = sessionStorage.getItem('__d2l_scraper_running') === 'true';
+
+  if (!isRunning) {
+    // ─── START NEW SESSION ───
+    console.log('%c[Scraper] Iniciando nueva sesión de extracción...', 'color: #4f8ef7; font-weight: bold;');
+
+    const results = [];
+    sessionStorage.setItem('__d2l_scraper_running', 'true');
+    sessionStorage.setItem('__d2l_scraper_results', JSON.stringify(results));
+
+    // Scrape Page 1
+    const pageRows = extractCurrentPageRows();
+    results.push(...pageRows);
+    sessionStorage.setItem('__d2l_scraper_results', JSON.stringify(results));
+
+    if (pageSelect && pageSelect.options.length > 1) {
+      console.log('%c[Scraper] Página 1 guardada. Cambiando a la Página 2...', 'color: #7c5af7;');
+      pageSelect.selectedIndex = 1;
+      pageSelect.dispatchEvent(new Event('change'));
+      console.log('Cuando cargue la Página 2, pulsa Flecha Arriba (↑) + Enter en la consola.', 'color: #f0c050; font-weight: bold;');
+    } else {
+      // Single page scenario
+      console.log('%c[Scraper] Extracción finalizada (Página única). Descargando...', 'color: #22d3a0; font-weight: bold;');
+      downloadCSV(results);
+      sessionStorage.removeItem('__d2l_scraper_running');
+      sessionStorage.removeItem('__d2l_scraper_results');
+    }
+  } else {
+    // ─── CONTINUING SESSION ───
+    const results = JSON.parse(sessionStorage.getItem('__d2l_scraper_results') || '[]');
+    const currentPageIndex = pageSelect ? pageSelect.selectedIndex : 0;
+    const totalPages = pageSelect ? pageSelect.options.length : 1;
+
+    console.log(\`%c[Scraper] Continuando sesión. Escaneando Página \${currentPageIndex + 1} de \${totalPages}...\`, 'color: #4f8ef7;');
+    const pageRows = extractCurrentPageRows();
+
+    // Prevent duplicate entries
+    pageRows.forEach(row => {
+      if (!results.some(r => r.name === row.name)) {
+        results.push(row);
+      }
+    });
+
+    sessionStorage.setItem('__d2l_scraper_results', JSON.stringify(results));
+
+    if (pageSelect && currentPageIndex < totalPages - 1) {
+      console.log(\`%c[Scraper] Página \${currentPageIndex + 1} guardada. Cambiando a la Página \${currentPageIndex + 2}...\`, 'color: #7c5af7;');
+      pageSelect.selectedIndex = currentPageIndex + 1;
+      pageSelect.dispatchEvent(new Event('change'));
+      console.log(\`Cuando cargue la Página \${currentPageIndex + 2}, pulsa Flecha Arriba (↑) + Enter en la consola.\`, 'color: #f0c050; font-weight: bold;');
+    } else {
+      // Completed last page
+      console.log('%c[Scraper] ¡Todas las páginas escaneadas correctamente!', 'color: #22d3a0; font-weight: bold;');
+      console.log(\`%cDescargando CSV consolidado: "\${safeFilename}.csv"\`, 'color: #22d3a0; font-weight: bold;');
+      downloadCSV(results);
+
+      // Clean session storage
+      sessionStorage.removeItem('__d2l_scraper_running');
+      sessionStorage.removeItem('__d2l_scraper_results');
+      console.log('[Scraper] Sesión y memoria limpiadas con éxito.');
+    }
+  }
 })();`;
 
     scriptCode.textContent = scraperText;

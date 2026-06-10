@@ -46,11 +46,16 @@
       const name = nameLink ? cleanText(nameLink) : '(unknown)';
 
       // 2. Evaluated Status
-      const tooltipSpan = headerRow.querySelector('td.dlay_r d2l-tooltip-help span');
+      const tooltipHelp = headerRow.querySelector('td.dlay_r d2l-tooltip-help');
       let evaluated = false;
-      if (tooltipSpan) {
-        const txt = cleanText(tooltipSpan);
-        evaluated = txt.startsWith('Guardado') && txt.replace('Guardado', '').trim().length > 0;
+      if (tooltipHelp) {
+        const tooltipSpan = tooltipHelp.querySelector('span');
+        const txt = tooltipSpan ? cleanText(tooltipSpan) : '';
+        const attrTxt = tooltipHelp.getAttribute('text') || '';
+        const combinedTxt = (txt + ' ' + attrTxt).toLowerCase();
+        evaluated = combinedTxt.includes('guardado') ||
+          combinedTxt.includes('publicad') ||
+          combinedTxt.includes('evaluad');
       }
 
       // 3. Delivery Status
@@ -135,7 +140,7 @@
   if (!isRunning) {
     // ─── START NEW SESSION ───
     console.log('%c[Scraper] Iniciando nueva sesión de extracción...', 'color: #4f8ef7; font-weight: bold;');
-    
+
     const results = [];
     sessionStorage.setItem('__d2l_scraper_running', 'true');
     sessionStorage.setItem('__d2l_scraper_results', JSON.stringify(results));
@@ -149,7 +154,7 @@
       console.log('%c[Scraper] Página 1 guardada. Cambiando a la Página 2...', 'color: #7c5af7;');
       pageSelect.selectedIndex = 1;
       pageSelect.dispatchEvent(new Event('change'));
-      console.log('%c👉 Cuando cargue la Página 2, pulsa Flecha Arriba (↑) + Enter en la consola.', 'color: #f0c050; font-weight: bold;');
+      console.log('Cuando cargue la Página 2, pulsa Flecha Arriba (↑) + Enter en la consola.', 'color: #f0c050; font-weight: bold;');
     } else {
       // Single page scenario
       console.log('%c[Scraper] Extracción finalizada (Página única). Descargando...', 'color: #22d3a0; font-weight: bold;');
@@ -179,7 +184,7 @@
       console.log(`%c[Scraper] Página ${currentPageIndex + 1} guardada. Cambiando a la Página ${currentPageIndex + 2}...`, 'color: #7c5af7;');
       pageSelect.selectedIndex = currentPageIndex + 1;
       pageSelect.dispatchEvent(new Event('change'));
-      console.log(`%c👉 Cuando cargue la Página ${currentPageIndex + 2}, pulsa Flecha Arriba (↑) + Enter en la consola.`, 'color: #f0c050; font-weight: bold;');
+      console.log(`Cuando cargue la Página ${currentPageIndex + 2}, pulsa Flecha Arriba (↑) + Enter en la consola.`, 'color: #f0c050; font-weight: bold;');
     } else {
       // Completed last page
       console.log('%c[Scraper] ¡Todas las páginas escaneadas correctamente!', 'color: #22d3a0; font-weight: bold;');
