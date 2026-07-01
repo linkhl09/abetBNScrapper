@@ -1,0 +1,11 @@
+[
+  {
+    "name": "Taller 1",
+    "aliases": ["T1", "Entrega Taller 1", "Entrega T1"]
+  },
+  {
+    "name": "ExpoAndes Documento",
+    "aliases": ["Documento ExpoAndes", "DF EA", "Entrega Documento Final"],
+    "groupName": "ExpoAndes"
+  }
+]

@@ -1,0 +1,27 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		}
+	],
+	"settings": {
+		"search.exclude": {
+			".venv": true,
+			"__pycache__": true
+		}
+	},
+	"launch": {
+		"version": "0.2.0",
+		"configurations": [
+			{
+				"name": "PyDebug: Scraper",
+				"type": "debugpy",
+				"request": "launch",
+				"program": "scraper.py",
+				"console": "integratedTerminal",
+				"python": "${workspaceFolder}/.venv/bin/python"
+			}
+		],
+		"compounds": []
+	}
+}
