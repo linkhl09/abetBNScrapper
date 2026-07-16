@@ -1,11 +1,14 @@
+import base64
 import os
 import time
 import traceback
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.print_page_options import PrintOptions
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from utils import prompt_user_config, load_activities, search_element_by_id, search_text_in_element_list, select_students_for_abet, select_students_for_activity, extract_surnames, ensure_dir, find_in_shadow
+from utils import prompt_user_config, load_activities, select_students_for_abet, select_students_for_activity, extract_surnames, ensure_dir
+from web_utils import find_in_shadow, search_element_by_id, search_text_in_element_list
 from parser import parse_grades_page
 from excel_utils import (
     add_sheet_with_table,
@@ -21,6 +24,7 @@ class D2LScraper:
         self.config = prompt_user_config()
         self.activities_config = load_activities()
         self._validate_groups_config()
+        self._validate_activity_types()
 
         ensure_dir(self.config['root_folder'])
         
@@ -71,6 +75,16 @@ class D2LScraper:
                 print("Could not find neither the default groups file nor a user-provided one. Please ensure you have a Groups_<course_code>.xlsx file in the root folder.")
                 print("The file can be extracted from Brightspace by exporting grades with groups information.")
                 print("If you do not have groups, please remove the 'groupName' field from your activities.json file.")
+                print("Exiting program.")
+                exit()
+
+    def _validate_activity_types(self):
+        valid_types = {"assignment", "quiz"}
+        for activity in self.activities_config:
+            activity_type = activity.get("type")
+            if activity_type is not None and activity_type not in valid_types:
+                print(f"Invalid 'type' value '{activity_type}' for activity '{activity.get('name')}'.")
+                print(f"Valid values are: {sorted(valid_types)} (or omit the field for the default 'assignment' behavior).")
                 print("Exiting program.")
                 exit()
 
@@ -261,7 +275,7 @@ class D2LScraper:
 
         return student_row
         
-    def _get_submission_link_from_row(self, student_row, col_idx):
+    def _get_submission_link_from_row(self, student_row, col_idx, activity_type="assignment"):
         # 2. Get cells and find the correct col cell
         try:
             cells = student_row.find_elements(By.XPATH, './td | ./th')
@@ -272,10 +286,12 @@ class D2LScraper:
         except Exception as e:
             print(f"    [Error] Failed to get cells for student row: {e}")
             return { "error": f"Failed to get cells for student row: {e}" }
-            
-        # 3. Look for the submission link in the cell
+
+        # 3. Look for the submission link in the cell.
+        # Assignment cells expose GetAssignmentLocation..., quiz cells expose QuizMarkNewTab(...).
+        onclick_marker = "GetAssignmentLocation" if activity_type == "assignment" else "QuizMarkNewTab"
         try:
-            submission_links = cell.find_elements(By.XPATH, './/a[contains(@onclick, "GetAssignmentLocation")]')
+            submission_links = cell.find_elements(By.XPATH, f'.//a[contains(@onclick, "{onclick_marker}")]')
             if not submission_links:
                 print(f"    [Info] No submissions link in the cell (student might not have submitted).")
                 return { "error": "No submission link (student might not have submitted)" }
@@ -286,91 +302,126 @@ class D2LScraper:
         
         return {"link": link }
 
+    def _find_submission_link_with_fallback(self, student, activity_name, activity_config, activity_type):
+        """
+        Locates the submission/quiz link for the student's row, falling back to
+        the student's group members (per activity_config['groupName']) if the
+        student themself has no link. Returns the link element, or None if not
+        found (logging the appropriate reason to the 'errors' sheet in that case).
+        """
+        student_name = student['name']
+        col_idx = student['col_idx']
+
+        student_row = self._get_student_row(student_name)
+        if not student_row:
+            print(f"    [Error] Could not find row for student '{student_name}'.")
+            append_array_to_table(self.workbook, "errors", [activity_name, "Student row not found", student_name])
+            return None
+
+        sub_link = self._get_submission_link_from_row(student_row, col_idx, activity_type)
+        if sub_link.get("error") is None:
+            return sub_link.get("link")
+
+        print(f"    [Error] Submission link not found for student '{student_name}'.")
+        if activity_config.get("groupName") is None:
+            append_array_to_table(self.workbook, "errors", [activity_name, "No submission link (student might not have submitted)", student_name])
+            return None
+
+        activity_group_name = activity_config["groupName"]
+        group_members = None
+        group_name = None
+        for group in self.groups_config.get(activity_group_name, []):
+            if student_name in self.groups_config[activity_group_name][group]:
+                group_members = self.groups_config[activity_group_name][group]
+                group_name = group
+                break
+        if group_members is None:
+            append_array_to_table(self.workbook, "errors", [activity_name, "No submission link (student might not have submitted). And the student does not belong to any group.", student_name])
+            return None
+
+        for member in group_members:
+            if member == student_name:
+                continue
+            member_row = self._get_student_row(member)
+            if not member_row:
+                print(f"    [Error] Could not find row for group member '{member}'.")
+                continue
+            member_sub_link = self._get_submission_link_from_row(member_row, col_idx, activity_type)
+            if member_sub_link.get("error") is not None:
+                continue
+            link = member_sub_link.get("link")
+            if link is not None:
+                print(f"    [Info] Found submission link from group member '{member}'.")
+                return link
+
+        print(f"    [Error] No submission link found for any group member of '{student_name}'.")
+        append_array_to_table(self.workbook, "errors", [activity_name, "No submission link (student might not have submitted). And no group member has a submission link. group: " + group_name, student_name])
+        return None
+
+    def _open_link_in_new_tab(self, link):
+        """
+        Scrolls to and JS-clicks the link (bypassing sticky header interception),
+        then waits for it to open in a new tab/window.
+        Returns (main_window, opened_tab) where opened_tab indicates whether a
+        new tab/window was actually opened and the driver switched into it.
+        """
+        main_window = self.driver.current_window_handle
+        handles_before = self.driver.window_handles
+
+        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", link)
+        time.sleep(0.5)
+        self.driver.execute_script("arguments[0].click();", link)
+        time.sleep(3)  # Wait for new tab / page to load
+
+        handles_after = self.driver.window_handles
+        opened_tab = False
+        if len(handles_after) > len(handles_before):
+            new_window = [w for w in handles_after if w not in handles_before][0]
+            self.driver.switch_to.window(new_window)
+            opened_tab = True
+
+        return main_window, opened_tab
+
+    def _close_tab_and_return(self, main_window, opened_tab):
+        if opened_tab:
+            self.driver.close()
+            self.driver.switch_to.window(main_window)
+        else:
+            self.driver.back()
+        # Wait a bit for the grades page to be fully interactive again
+        time.sleep(2)
+
+    def _recover_main_window(self, main_window):
+        # Attempt to recover by closing the tab if we are not in the main window
+        try:
+            if self.driver.current_window_handle != main_window:
+                self.driver.close()
+                self.driver.switch_to.window(main_window)
+        except Exception:
+            pass
+
     def download_student_submissions(self, student, activity_name, activity_folder, activity_config):
         """
         Locates the student's submission cell, clicks it, and downloads files on the submission page.
         """
         student_name = student['name']
-        col_idx = student['col_idx']
-        
         print(f"  Student: {student_name} ({student['type'].upper()})")
-        
-        # 1. Locate the student's row in the grades table
-        student_row = self._get_student_row(student_name)
-        if not student_row:
-            print(f"    [Error] Could not find row for student '{student_name}'.")
-            append_array_to_table(self.workbook, "errors", [activity_name, "Student row not found", student_name])
+
+        link = self._find_submission_link_with_fallback(student, activity_name, activity_config, "assignment")
+        if link is None:
             return
 
-        link = None
-        # Attempt to get the submission link from the student's row and column index
-        sub_link = self._get_submission_link_from_row(student_row, col_idx)
-        if sub_link.get("error") is None:
-            link = sub_link.get("link")
+        main_window, opened_tab = self._open_link_in_new_tab(link)
 
-        if link is None:
-            print(f"    [Error] Submission link not found for student '{student_name}'.")
-            if activity_config.get("groupName") is None:
-                append_array_to_table(self.workbook, "errors", [activity_name, "No submission link (student might not have submitted)", student_name])
-                return
-            else:
-                activity_group_name = activity_config["groupName"]
-                group_members = None
-                group_name = None
-                for group in self.groups_config.get(activity_group_name, []):
-                    if student_name in self.groups_config[activity_group_name][group]:
-                        group_members = self.groups_config[activity_group_name][group]
-                        group_name = group
-                        break
-                if group_members is None:
-                    append_array_to_table(self.workbook, "errors", [activity_name, "No submission link (student might not have submitted). And the student does not belong to any group.", student_name])
-                    return
-                
-                for member in group_members:
-                    if member == student_name:
-                        continue
-                    member_row = self._get_student_row(member)
-                    if not member_row:
-                        print(f"    [Error] Could not find row for group member '{member}'.")
-                        continue
-                    member_sub_link = self._get_submission_link_from_row(member_row, col_idx)
-                    if member_sub_link.get("error") is not None:
-                        continue
-                    link = member_sub_link.get("link")
-                    if link is not None:
-                        print(f"    [Info] Found submission link from group member '{member}'.")
-                        break
-                if link is None:
-                    print(f"    [Error] No submission link found for any group member of '{student_name}'.")
-                    append_array_to_table(self.workbook, "errors", [activity_name, "No submission link (student might not have submitted). And no group member has a submission link. group: " + group_name, student_name])
-                    return     
-            
-        # 4. Scroll into view and JS-click the link to bypass sticky header interception
-        main_window = self.driver.current_window_handle
-        handles_before = self.driver.window_handles
-        
         try:
-            # Scroll element to center of viewport, then use JS click to bypass header overlap
-            self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", link)
-            time.sleep(0.5)
-            self.driver.execute_script("arguments[0].click();", link)
-            time.sleep(3)  # Wait for new tab / page to load
-            
-            handles_after = self.driver.window_handles
-            opened_tab = False
-            if len(handles_after) > len(handles_before):
-                new_window = [w for w in handles_after if w not in handles_before][0]
-                self.driver.switch_to.window(new_window)
-                opened_tab = True
-            
             # Set Chrome's download path BEFORE clicking the button
             self.driver.execute_cdp_cmd('Page.setDownloadBehavior', {
                 'behavior': 'allow',
                 'downloadPath': activity_folder
             })
-            
+
             download_triggered = False
-            
+
             # Try the "Descargar todos los archivos" button first (Consistent Evaluation UI)
             try:
                 page_btts = find_in_shadow(self.driver, "d2l-button-subtle", multiple=True)
@@ -392,25 +443,67 @@ class D2LScraper:
                 surnames = extract_surnames(student_name)
                 target_name = f"{student['type']}-{surnames}.zip"
                 self.wait_and_rename_download(activity_folder, None, target_name)
-                
-            # Cleanup tab
-            if opened_tab:
-                self.driver.close()
-                self.driver.switch_to.window(main_window)
-            else:
-                self.driver.back()
-            
-            # Wait a bit for the grades page to be fully interactive again
-            time.sleep(2)      
+
+            self._close_tab_and_return(main_window, opened_tab)
         except Exception as e:
             print(f"    [Error] Exception during student download: {e}")
-            # Attempt to recover by closing tab if we are not in main window
-            try:
-                if self.driver.current_window_handle != main_window:
-                    self.driver.close()
-                    self.driver.switch_to.window(main_window)
-            except Exception:
-                pass
+            self._recover_main_window(main_window)
+
+    def download_student_quiz_pdf(self, student, activity_name, activity_folder, activity_config):
+        """
+        Locates the student's quiz cell and opens the review page for the most
+        recent attempt (D2L's generated link already defaults to
+        selectedItem=mostRecent), then saves the rendered page as a PDF.
+        """
+        student_name = student['name']
+        print(f"  Student: {student_name} ({student['type'].upper()})")
+
+        link = self._find_submission_link_with_fallback(student, activity_name, activity_config, "quiz")
+        if link is None:
+            return
+
+        main_window, opened_tab = self._open_link_in_new_tab(link)
+
+        try:
+            # The quiz review page is a d2l-consistent-evaluation shadow-DOM SPA;
+            # wait for it to mount before trying to print its rendered content.
+            shell = find_in_shadow(self.driver, "d2l-consistent-evaluation", timeout=15)
+            if shell is None:
+                print(f"    [Error] Quiz review page did not load for student '{student_name}'.")
+                append_array_to_table(self.workbook, "errors", [activity_name, "Quiz review page did not load", student_name])
+                self._close_tab_and_return(main_window, opened_tab)
+                return
+
+            time.sleep(6)  # Let the quiz SPA finish rendering questions before printing
+
+            print_options = PrintOptions()
+            print_options.background = True
+            pdf_bytes = base64.b64decode(self.driver.print_page(print_options))
+
+            if len(pdf_bytes) < 5000:
+                print(f"    [Warning] Generated quiz PDF looks suspiciously small ({len(pdf_bytes)} bytes); review manually.")
+                append_array_to_table(self.workbook, "errors", [activity_name, "Quiz PDF looks suspiciously small, review manually", student_name])
+
+            surnames = extract_surnames(student_name)
+            target_name = f"{student['type']}-{surnames}.pdf"
+            target_path = os.path.join(activity_folder, target_name)
+            with open(target_path, "wb") as f:
+                f.write(pdf_bytes)
+            print(f"      [Success] Saved: {target_name}")
+
+            self._close_tab_and_return(main_window, opened_tab)
+        except Exception as e:
+            print(f"    [Error] Exception while printing quiz PDF: {e}")
+            append_array_to_table(self.workbook, "errors", [activity_name, "Error rendering/printing quiz PDF for the student.", student_name])
+            self._recover_main_window(main_window)
+
+    def download_student_evidence(self, student, activity_name, activity_folder, activity_config):
+        """Dispatches to the assignment or quiz download path based on activity_config['type']."""
+        activity_type = activity_config.get("type") or "assignment"
+        if activity_type == "quiz":
+            self.download_student_quiz_pdf(student, activity_name, activity_folder, activity_config)
+        else:
+            self.download_student_submissions(student, activity_name, activity_folder, activity_config)
 
     def run(self):
         try:
@@ -475,7 +568,7 @@ class D2LScraper:
                     activity_config = next((a for a in self.activities_config if a['name'] == activity_name), None)
                     
                     for student in students:
-                        self.download_student_submissions(student, activity_name, activity_folder, activity_config)
+                        self.download_student_evidence(student, activity_name, activity_folder, activity_config)
         finally:
             print("Saving results workbook in given root folder...")
             filename = f"results_{self.config['course_code']}.xlsx" if self.config.get('course_code') else "results.xlsx"

@@ -51,6 +51,20 @@ Create `activities.json` in the same directory (you can also find the template i
 
 _If `activities.json` is not found, the script will prompt you in the terminal to enter activities and their aliases manually._
 
+#### Quiz-type activities
+
+Some activities are D2L "Cuestionarios" (quizzes) filled in directly on the platform instead of file uploads. Mark these with `"type": "quiz"`:
+
+```json
+{
+  "name": "Cuestionario 1",
+  "aliases": ["Quiz 1"],
+  "type": "quiz"
+}
+```
+
+Omit `type` (or set it to `"assignment"`) for regular file-upload activities — this is the default and requires no changes to existing `activities.json` files. For quiz activities, the tool opens each selected student's most recent quiz attempt and saves the rendered page as a PDF (`<type>-<Surnames>.pdf`) instead of downloading a `.zip` of submitted files. This can only be configured through `activities.json`, not from the terminal prompts.
+
 If you have configured in brightspace activities in groups, you can also specify which activities belong to a group in the `activities.json` file. For example if you have a group category called "ExpoaAndes" you can configure the activities like this:
 
 ```json
@@ -132,6 +146,8 @@ Downloads are automatically organized into folders structured as follows:
 
 _Note: If multiple files are uploaded for a single submission, they will be saved with a `_1`, `_2` index suffix._
 
+_Note: The file extension depends on the activity's `type`: regular activities produce `.zip` files with the student's uploaded submission, while `"type": "quiz"` activities produce a `.pdf` of the student's most recent quiz attempt instead._
+
 ## About the groups
 
 When the students use groups, only one sends the file to the course and it could be a different student than the selected ones. When this happens the program will check if it's a group activity and if it is, search for the files in the other group members activities until it's found.
@@ -143,5 +159,6 @@ To check the results, navigate to your output folder. There you can find the [fo
 - Could not download a file for a student.
 - A student didn't submit anything.
 - The group of the student didn't submit anything.
+- The quiz review page did not load, or the generated PDF looks suspiciously small (for `"type": "quiz"` activities) — check whether the student actually attempted the quiz.
 
 The errors regarding "Could not download a file for a student" are usually for large files that require more time for the download. If you want, you can increment the timeout of the function `wait_and_rename_download` which is 45 seconds by default. 

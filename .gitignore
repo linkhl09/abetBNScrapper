@@ -6,6 +6,9 @@
 *.xlsx
 *.csv
 
+# testing related files
+test/*
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

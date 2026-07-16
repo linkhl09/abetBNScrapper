@@ -7,5 +7,10 @@
     "name": "ExpoAndes Documento",
     "aliases": ["Documento ExpoAndes", "DF EA", "Entrega Documento Final"],
     "groupName": "ExpoAndes"
+  },
+  {
+    "name": "Cuestionario 1",
+    "aliases": ["Quiz 1"],
+    "type": "quiz"
   }
 ]
