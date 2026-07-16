@@ -51,6 +51,7 @@ class D2LScraper:
         
         print("Starting Chrome browser...")
         self.driver = webdriver.Chrome(options=options)
+        self.driver.maximize_window()
         self.wait = WebDriverWait(self.driver, 10)
 
     def _validate_groups_config(self):
