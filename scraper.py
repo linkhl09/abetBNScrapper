@@ -1,5 +1,6 @@
 import base64
 import os
+import re
 import time
 import traceback
 from selenium import webdriver
@@ -7,9 +8,9 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.print_page_options import PrintOptions
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from utils import prompt_user_config, load_activities, select_students_for_abet, select_students_for_activity, extract_surnames, ensure_dir
+from utils import prompt_user_config, load_activities, select_students_for_abet, select_students_for_activity, extract_surnames, ensure_dir, normalize_student_name
 from web_utils import find_in_shadow, search_element_by_id, search_text_in_element_list
-from parser import parse_grades_page
+from parser import parse_grades_page, parse_quiz_grading_page
 from excel_utils import (
     add_sheet_with_table,
     append_array_to_table,
@@ -80,12 +81,18 @@ class D2LScraper:
                 exit()
 
     def _validate_activity_types(self):
-        valid_types = {"assignment", "quiz"}
+        valid_types = {"assignment", "quiz", "standalone_quiz"}
         for activity in self.activities_config:
             activity_type = activity.get("type")
             if activity_type is not None and activity_type not in valid_types:
                 print(f"Invalid 'type' value '{activity_type}' for activity '{activity.get('name')}'.")
                 print(f"Valid values are: {sorted(valid_types)} (or omit the field for the default 'assignment' behavior).")
+                print("Exiting program.")
+                exit()
+            if activity_type == "standalone_quiz" and activity.get("groupName") is not None:
+                print(f"Activity '{activity.get('name')}' has type 'standalone_quiz' and a 'groupName'.")
+                print("Group support for standalone quizzes (reached via the Cuestionarios tool) is not implemented.")
+                print("Please remove the 'groupName' field or change the activity's type.")
                 print("Exiting program.")
                 exit()
 
@@ -165,6 +172,17 @@ class D2LScraper:
         except Exception as e:
             self._log_exception("Could not click Grades/Calificaciones automatically", e)
             input("Please navigate to the Grades section manually and press Enter...")
+
+    def _navigate_to_quizzes_tool(self) -> None:
+        print("Navigating to Cuestionarios (Quizzes) tool...")
+        try:
+            quizzes_link = self.wait.until(EC.presence_of_element_located(
+                (By.PARTIAL_LINK_TEXT, "Cuestionarios")
+            ))
+            self.driver.execute_script("arguments[0].click();", quizzes_link)
+        except Exception as e:
+            self._log_exception("Could not click Cuestionarios/Quizzes automatically", e)
+            input("Please navigate to the Cuestionarios tool manually and press Enter...")
 
     def _login_and_navigate(self):
         print(f"Navigating to {BASE_URL}")
@@ -450,6 +468,40 @@ class D2LScraper:
             print(f"    [Error] Exception during student download: {e}")
             self._recover_main_window(main_window)
 
+    def _print_quiz_review_page_to_pdf(self, student, activity_name, activity_folder) -> bool:
+        """
+        Waits for the currently-loaded quiz review page's d2l-consistent-evaluation
+        shadow-DOM SPA to mount, then prints it (CDP print_page) to
+        <type>-<Surnames>.pdf inside activity_folder. Returns True on success (a
+        suspiciously-small PDF is logged as a warning but still counts as saved),
+        False if the review page never loaded. Assumes the review page is already
+        the active tab/window.
+        """
+        student_name = student['name']
+        shell = find_in_shadow(self.driver, "d2l-consistent-evaluation", timeout=15)
+        if shell is None:
+            print(f"    [Error] Quiz review page did not load for student '{student_name}'.")
+            append_array_to_table(self.workbook, "errors", [activity_name, "Quiz review page did not load", student_name])
+            return False
+
+        time.sleep(6)  # Let the quiz SPA finish rendering questions before printing
+
+        print_options = PrintOptions()
+        print_options.background = True
+        pdf_bytes = base64.b64decode(self.driver.print_page(print_options))
+
+        if len(pdf_bytes) < 5000:
+            print(f"    [Warning] Generated quiz PDF looks suspiciously small ({len(pdf_bytes)} bytes); review manually.")
+            append_array_to_table(self.workbook, "errors", [activity_name, "Quiz PDF looks suspiciously small, review manually", student_name])
+
+        surnames = extract_surnames(student_name)
+        target_name = f"{student['type']}-{surnames}.pdf"
+        target_path = os.path.join(activity_folder, target_name)
+        with open(target_path, "wb") as f:
+            f.write(pdf_bytes)
+        print(f"      [Success] Saved: {target_name}")
+        return True
+
     def download_student_quiz_pdf(self, student, activity_name, activity_folder, activity_config):
         """
         Locates the student's quiz cell and opens the review page for the most
@@ -466,32 +518,7 @@ class D2LScraper:
         main_window, opened_tab = self._open_link_in_new_tab(link)
 
         try:
-            # The quiz review page is a d2l-consistent-evaluation shadow-DOM SPA;
-            # wait for it to mount before trying to print its rendered content.
-            shell = find_in_shadow(self.driver, "d2l-consistent-evaluation", timeout=15)
-            if shell is None:
-                print(f"    [Error] Quiz review page did not load for student '{student_name}'.")
-                append_array_to_table(self.workbook, "errors", [activity_name, "Quiz review page did not load", student_name])
-                self._close_tab_and_return(main_window, opened_tab)
-                return
-
-            time.sleep(6)  # Let the quiz SPA finish rendering questions before printing
-
-            print_options = PrintOptions()
-            print_options.background = True
-            pdf_bytes = base64.b64decode(self.driver.print_page(print_options))
-
-            if len(pdf_bytes) < 5000:
-                print(f"    [Warning] Generated quiz PDF looks suspiciously small ({len(pdf_bytes)} bytes); review manually.")
-                append_array_to_table(self.workbook, "errors", [activity_name, "Quiz PDF looks suspiciously small, review manually", student_name])
-
-            surnames = extract_surnames(student_name)
-            target_name = f"{student['type']}-{surnames}.pdf"
-            target_path = os.path.join(activity_folder, target_name)
-            with open(target_path, "wb") as f:
-                f.write(pdf_bytes)
-            print(f"      [Success] Saved: {target_name}")
-
+            self._print_quiz_review_page_to_pdf(student, activity_name, activity_folder)
             self._close_tab_and_return(main_window, opened_tab)
         except Exception as e:
             print(f"    [Error] Exception while printing quiz PDF: {e}")
@@ -505,6 +532,162 @@ class D2LScraper:
             self.download_student_quiz_pdf(student, activity_name, activity_folder, activity_config)
         else:
             self.download_student_submissions(student, activity_name, activity_folder, activity_config)
+
+    def _find_quiz_mark_url(self, activity_name, activity_config):
+        """
+        On the already-loaded Cuestionarios list page (quizzes_manage.d2l), finds
+        the quiz name link matching `activity_name`/aliases and returns the
+        quiz_mark_users.d2l?qi=&ou= grading URL, built from the qi/ou query params
+        already present in that link's href. No RPC/dropdown-menu click needed —
+        unlike the Grades-page quiz-review URL (which carries an opaque
+        currentActorActivityUsage RPC token), this admin URL is a plain,
+        bookmarkable query string.
+        """
+        try:
+            self.wait.until(EC.presence_of_element_located(
+                (By.XPATH, '//a[contains(@onclick, "SetReturnPoint")]')
+            ))
+        except Exception as e:
+            self._log_exception("Cuestionarios list page did not load", e)
+            return None
+
+        quiz_links = self.driver.find_elements(By.XPATH, '//a[contains(@onclick, "SetReturnPoint")]')
+
+        names_to_check = [activity_name] + (activity_config.get("aliases") or [])
+        matched_link = None
+        for name in names_to_check:
+            matched_link = search_text_in_element_list(quiz_links, name)
+            if matched_link:
+                break
+
+        if not matched_link:
+            print(f"    [Error] Could not find quiz '{activity_name}' in the Cuestionarios list "
+                  f"(checked names: {names_to_check}). If the course has many quizzes and the list "
+                  f"is paginated, this quiz may be on a page not scanned here.")
+            return None
+
+        href = matched_link.get_attribute("href") or ""
+        qi_match = re.search(r'qi=(\d+)', href)
+        ou_match = re.search(r'ou=(\d+)', href)
+        if not qi_match or not ou_match:
+            print(f"    [Error] Quiz link for '{activity_name}' had no qi/ou in its href: {href}")
+            return None
+
+        return f"{BASE_URL}/d2l/lms/quizzing/admin/mark/quiz_mark_users.d2l?qi={qi_match.group(1)}&ou={ou_match.group(1)}"
+
+    def _find_last_quiz_attempt_link(self, user_id):
+        """
+        On the currently-loaded quiz_mark_users.d2l 'Usuarios' tab, finds the
+        'intento N' link with the highest N for the given D2L userId. Per-attempt
+        links carry onclick actionParam='mark,<attemptId>,<userId>' (comma right
+        after "mark"), distinguishable from the summary row's
+        actionParam='markoverall,0,<userId>' (no comma right after "mark").
+        """
+        xpath = (
+            ".//a[contains(@onclick, \"actionParam='mark,\") "
+            f"and contains(@onclick, \",{user_id}';\")]"
+        )
+        links = self.driver.find_elements(By.XPATH, xpath)
+        if not links:
+            return None
+
+        def _attempt_num(link):
+            match = re.search(r'(\d+)', link.text)
+            return int(match.group(1)) if match else -1
+
+        return max(links, key=_attempt_num)
+
+    def download_standalone_quiz_pdf(self, student, activity_name, activity_folder, user_id, quiz_mark_url):
+        """
+        On the already-loaded quiz_mark_users.d2l 'Usuarios' tab, finds the given
+        student's highest-numbered 'intento N' attempt link (matched via the D2L
+        userId resolved by parse_quiz_grading_page), clicks it (same-tab
+        navigation — no new window opens for this link), prints the resulting
+        review page, then reloads quiz_mark_users.d2l fresh so the next student
+        starts from a known page.
+        """
+        student_name = student['name']
+        print(f"  Student: {student_name} ({student['type'].upper()})")
+
+        attempt_link = self._find_last_quiz_attempt_link(user_id)
+        if attempt_link is None:
+            # This student was selected because they have a grade (from the
+            # 'calificación general' row parsed by parse_quiz_grading_page), but
+            # has no 'intento N' attempt link at all — the grade was manually
+            # entered/overridden in D2L rather than coming from an actual attempt.
+            print(f"    [Error] Student '{student_name}' has a grade but no quiz attempt (manually uploaded grade).")
+            append_array_to_table(self.workbook, "errors", [activity_name, "manually uploaded grade, please submit the evidence manually before uploading to Calis", student_name])
+            return
+
+        main_window, _opened_tab = self._open_link_in_new_tab(attempt_link)
+        try:
+            self._print_quiz_review_page_to_pdf(student, activity_name, activity_folder)
+        except Exception as e:
+            print(f"    [Error] Exception while printing standalone quiz PDF: {e}")
+            append_array_to_table(self.workbook, "errors", [activity_name, "Error rendering/printing quiz PDF for the student.", student_name])
+            self._recover_main_window(main_window)
+        finally:
+            # "intento N" navigates in place (no new tab), so _close_tab_and_return
+            # would fall back to driver.back(). That same-tab-navigation-then-back
+            # case is untested for this javascript:// + D2L.NavInfo trigger (not a
+            # normal href), so a fresh reload is the more deterministic choice.
+            self.driver.get(quiz_mark_url)
+
+    def download_standalone_quiz_evidence(self, activity_config, abet_students, section_folder_name):
+        """
+        Handles one `type: "standalone_quiz"` activity end-to-end: navigates to
+        the Cuestionarios tool, resolves the quiz's grading URL, loads it, parses
+        the 'Usuarios' tab, selects mejor/peor/Seguimiento_1-3 (reusing this
+        section's already-computed abet_students), then downloads each selected
+        student's last-attempt PDF. Mirrors run()'s existing per-activity block,
+        for a quiz that never appears as a Grades-page column.
+        """
+        activity_name = activity_config['name']
+        print(f"\nProcessing standalone quiz: {activity_name}")
+
+        self._navigate_to_quizzes_tool()
+        quiz_mark_url = self._find_quiz_mark_url(activity_name, activity_config)
+        if quiz_mark_url is None:
+            append_array_to_table(self.workbook, "errors",
+                [activity_name, "Quiz not found in Cuestionarios list (check name/aliases; pagination is not supported)", ""])
+            return
+
+        self.driver.get(quiz_mark_url)
+        students = parse_quiz_grading_page(self.driver.page_source)
+
+        if not students:
+            print(f"    [Error] No student attempts parsed for quiz '{activity_name}'.")
+            append_array_to_table(self.workbook, "errors", [activity_name, "Quiz found but 0 students/attempts parsed", ""])
+            return
+
+        selected = select_students_for_activity(students, abet_students)
+        # Keyed by normalized name rather than the raw string: abet_students'
+        # names came from the Grades page (parse_grades_page), while `students`
+        # here came from the Cuestionarios/Quizzing admin page — the two D2L
+        # tools can render the same student's name in a different word order
+        # (e.g. "LastName, FirstName" vs "FirstName LastName"), so an exact
+        # string match would wrongly report these students as never having
+        # attempted the quiz.
+        by_name = {normalize_student_name(s['name']): s for s in students}
+
+        activity_folder = os.path.join(
+            self.config['root_folder'], self.config['course_name'], section_folder_name, activity_name
+        )
+        ensure_dir(activity_folder)
+        print(f"Destination: {activity_folder}")
+
+        selected_students_list = [[activity_name, item.get("type"), item.get("name")] for item in selected]
+        append_array_to_table(self.workbook, "selectedStudents", selected_students_list)
+        for s in selected:
+            print(f"  [{s['type'].upper()}] {s['name']} (Grade: {s['grade']})")
+
+        for student in selected:
+            source = by_name.get(normalize_student_name(student['name']))
+            if source is None:
+                print(f"    [Error] Selected student '{student['name']}' did not attempt quiz '{activity_name}'.")
+                append_array_to_table(self.workbook, "errors", [activity_name, "Selected student has no attempt for this quiz", student['name']])
+                continue
+            self.download_standalone_quiz_pdf(student, activity_name, activity_folder, source['id'], quiz_mark_url)
 
     def run(self):
         try:
@@ -527,49 +710,60 @@ class D2LScraper:
                 # Extract grades table
                 print("Extracting grades HTML...")
                 html_content = self.driver.page_source
-                
+
                 print("Parsing grades...")
                 activity_data = parse_grades_page(html_content, self.activities_config)
-                
-                if not activity_data:
-                    print("No activities found or failed to parse for this section.")
-                    continue
 
-                # Collect all students from all activities
-                all_students = [student for activity_name, students in activity_data.items() for student in students]
-                
-                print("Selecting 3 students for abet following...")
-                abet_students = select_students_for_abet(all_students)
-                
-                print("\n--- Student Selection ---")
-                selected_students_by_activity = {}
-                for activity_name, students in activity_data.items():
-                    selected = select_students_for_activity(students, abet_students)
-                    selected_students_by_activity[activity_name] = selected
-                    print(f"\nActivity: {activity_name}")
-                    # add selected students to the results workbook
-                    selected_students_list = [[activity_name, item.get("type"), item.get("name")] for item in selected]
-                    append_array_to_table(self.workbook, "selectedStudents", selected_students_list)
-                    for s in selected:
-                        print(f"  [{s['type'].upper()}] {s['name']} (Grade: {s['grade']})")
-                        
-                print("\n--- Starting Downloads ---")
-                for activity_name, students in selected_students_by_activity.items():
-                    print(f"\nProcessing Activity: {activity_name}")
-                    
-                    section_folder_name = f"section{section}" if section is not None else "section_all"
-                    activity_folder = os.path.join(
-                        self.config['root_folder'],
-                        self.config['course_name'],
-                        section_folder_name,
-                        activity_name
-                    )
-                    ensure_dir(activity_folder)
-                    print(f"Destination: {activity_folder}")
-                    activity_config = next((a for a in self.activities_config if a['name'] == activity_name), None)
-                    
-                    for student in students:
-                        self.download_student_evidence(student, activity_name, activity_folder, activity_config)
+                section_folder_name = f"section{section}" if section is not None else "section_all"
+
+                if not activity_data:
+                    print("No grade-column activities found or failed to parse for this section.")
+                    abet_students = []
+                else:
+                    # Collect all students from all activities
+                    all_students = [student for activity_name, students in activity_data.items() for student in students]
+
+                    print("Selecting 3 students for abet following...")
+                    abet_students = select_students_for_abet(all_students)
+
+                    print("\n--- Student Selection ---")
+                    selected_students_by_activity = {}
+                    for activity_name, students in activity_data.items():
+                        selected = select_students_for_activity(students, abet_students)
+                        selected_students_by_activity[activity_name] = selected
+                        print(f"\nActivity: {activity_name}")
+                        # add selected students to the results workbook
+                        selected_students_list = [[activity_name, item.get("type"), item.get("name")] for item in selected]
+                        append_array_to_table(self.workbook, "selectedStudents", selected_students_list)
+                        for s in selected:
+                            print(f"  [{s['type'].upper()}] {s['name']} (Grade: {s['grade']})")
+
+                    print("\n--- Starting Downloads ---")
+                    for activity_name, students in selected_students_by_activity.items():
+                        print(f"\nProcessing Activity: {activity_name}")
+
+                        activity_folder = os.path.join(
+                            self.config['root_folder'],
+                            self.config['course_name'],
+                            section_folder_name,
+                            activity_name
+                        )
+                        ensure_dir(activity_folder)
+                        print(f"Destination: {activity_folder}")
+                        activity_config = next((a for a in self.activities_config if a['name'] == activity_name), None)
+
+                        for student in students:
+                            self.download_student_evidence(student, activity_name, activity_folder, activity_config)
+
+                # Standalone quizzes never appear on the Grades page (parse_grades_page
+                # can't see them at all), so they're processed separately here, once per
+                # section, reusing this section's abet_students (possibly empty if this
+                # section had no grade-column activities at all) and output convention.
+                if not abet_students:
+                    print("[Warning] No abet_students available for this section; Seguimiento_1-3 will be empty for standalone quizzes.")
+                for activity_config in self.activities_config:
+                    if activity_config.get("type") == "standalone_quiz":
+                        self.download_standalone_quiz_evidence(activity_config, abet_students, section_folder_name)
         finally:
             print("Saving results workbook in given root folder...")
             filename = f"results_{self.config['course_code']}.xlsx" if self.config.get('course_code') else "results.xlsx"

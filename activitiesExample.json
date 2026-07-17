@@ -12,5 +12,10 @@
     "name": "Cuestionario 1",
     "aliases": ["Quiz 1"],
     "type": "quiz"
+  },
+  {
+    "name": "Quiz Practica 1",
+    "aliases": ["Práctica Quiz 1"],
+    "type": "standalone_quiz"
   }
 ]

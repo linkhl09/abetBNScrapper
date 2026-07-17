@@ -104,6 +104,16 @@ def select_students_for_activity(student_list, abet_following_students):
     
     return selected
 
+def normalize_student_name(full_name):
+    """
+    Returns a comparison key for a student name that's insensitive to
+    "LastName, FirstName" vs "FirstName LastName" ordering/comma placement —
+    different D2L tools (e.g. Grades vs the Cuestionarios/Quizzing admin
+    pages) can render the same student's name in different orders.
+    """
+    tokens = re.split(r'[\s,]+', full_name.strip().lower())
+    return tuple(sorted(t for t in tokens if t))
+
 def extract_surnames(full_name):
     """Attempts to extract surnames assuming 'LastName, FirstName' format."""
     parts = full_name.split(',')

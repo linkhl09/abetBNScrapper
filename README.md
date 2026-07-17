@@ -65,6 +65,20 @@ Some activities are D2L "Cuestionarios" (quizzes) filled in directly on the plat
 
 Omit `type` (or set it to `"assignment"`) for regular file-upload activities — this is the default and requires no changes to existing `activities.json` files. For quiz activities, the tool opens each selected student's most recent quiz attempt and saves the rendered page as a PDF (`<type>-<Surnames>.pdf`) instead of downloading a `.zip` of submitted files. This can only be configured through `activities.json`, not from the terminal prompts.
 
+#### Standalone quiz activities (not on the Grades page)
+
+Some quizzes (e.g. practice/ungraded ones) are never linked to a Grades-page column, so the tool can't find them through the grades table at all. Mark these with `"type": "standalone_quiz"` instead:
+
+```json
+{
+  "name": "Quiz Practica 1",
+  "aliases": ["Práctica Quiz 1"],
+  "type": "standalone_quiz"
+}
+```
+
+The tool reaches these through D2L's "Cuestionarios" (Quizzes) course tool instead of "Calificaciones", using the quiz's own grading list to pick the best/worst/Seguimiento students and to save each one's last attempt as a PDF, same naming convention as regular quiz activities. `groupName` is not supported for `standalone_quiz` activities — the program will exit with an error if you combine them. If the course has a very long quiz list, only quizzes visible without paging through the list can currently be found; pagination is not handled yet.
+
 If you have configured in brightspace activities in groups, you can also specify which activities belong to a group in the `activities.json` file. For example if you have a group category called "ExpoaAndes" you can configure the activities like this:
 
 ```json
@@ -159,6 +173,8 @@ To check the results, navigate to your output folder. There you can find the [fo
 - Could not download a file for a student.
 - A student didn't submit anything.
 - The group of the student didn't submit anything.
-- The quiz review page did not load, or the generated PDF looks suspiciously small (for `"type": "quiz"` activities) — check whether the student actually attempted the quiz.
+- The quiz review page did not load, or the generated PDF looks suspiciously small (for `"type": "quiz"` or `"standalone_quiz"` activities) — check whether the student actually attempted the quiz.
+- The quiz wasn't found in the Cuestionarios list, or a selected student never attempted a `"standalone_quiz"` activity.
+- "manually uploaded grade, please submit the evidence manually before uploading to Calis" — a selected student has a grade for a `"standalone_quiz"` activity but no actual attempt (the grade was entered/overridden by hand in D2L). You'll need to track down and attach that student's evidence manually.
 
 The errors regarding "Could not download a file for a student" are usually for large files that require more time for the download. If you want, you can increment the timeout of the function `wait_and_rename_download` which is 45 seconds by default. 

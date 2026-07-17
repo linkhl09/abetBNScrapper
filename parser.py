@@ -122,6 +122,70 @@ def parse_grades_page(html_content, activities_config):
     return activity_data
 
 
+def parse_quiz_grading_page(html_content):
+    """
+    Parses the 'Calificar cuestionario' > 'Usuarios' tab (quiz_mark_users.d2l)
+    page source. Walks <tr> elements in document order, tracking the current
+    student name from 'd_gg' header rows, and emits one student dict per
+    'D2LGridSummaryRow_List' row (the student's official quiz score).
+
+    Returns a list of student dicts: {name, id, grade_text, grade, col_idx}.
+    - 'id' is the D2L userId, recovered from the summary row's
+      actionParam='markoverall,0,<userId>' onclick — the same id later used
+      by scraper.py to find that student's per-attempt "intento N" links.
+    - 'col_idx' is always None (this page has no column concept); kept only
+      so utils.select_students_for_activity (which reads
+      student_list[0]['col_idx']) can be reused unmodified.
+    """
+    soup = BeautifulSoup(html_content, 'html.parser')
+
+    students = []
+    current_name = None
+
+    for row in soup.find_all('tr'):
+        row_classes = row.get('class') or []
+
+        if 'd_gg' in row_classes:
+            # Normal header row: <tr><td>checkbox</td><td width="100%">Name</td></tr>.
+            # A student with zero attempts (e.g. a manually-entered/overridden
+            # grade) has no checkbox to select an attempt with, so the row only
+            # has ONE <td> (no width="100%") holding the name directly. Taking
+            # the LAST <td> in the nested row handles both shapes.
+            nested_row = row.find('tr')
+            current_name = None
+            if nested_row:
+                tds = nested_row.find_all('td', recursive=False)
+                if tds:
+                    current_name = tds[-1].get_text(strip=True)
+            continue
+
+        if 'D2LGridSummaryRow_List' in row_classes:
+            if current_name is None:
+                continue
+
+            overall_anchor = row.find('a', onclick=re.compile(r"actionParam='markoverall,"))
+            user_id = "unknown"
+            if overall_anchor and 'onclick' in overall_anchor.attrs:
+                match = re.search(r"actionParam='markoverall,\d+,(\d+)'", overall_anchor['onclick'])
+                if match:
+                    user_id = match.group(1)
+
+            strong_tag = row.find('strong')
+            grade_text = strong_tag.get_text(strip=True) if strong_tag else ""
+            grade_value = extract_numeric_grade(grade_text)
+
+            students.append({
+                "name": current_name,
+                "id": user_id,
+                "grade_text": grade_text,
+                "grade": grade_value,
+                "col_idx": None,
+            })
+            current_name = None
+
+    return students
+
+
 def extract_numeric_grade(grade_string):
     """
     Extracts the first number from a grade string like "4.32 / 5, 4.31" or "0* / 5"
