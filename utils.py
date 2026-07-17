@@ -105,13 +105,12 @@ def select_students_for_activity(student_list, abet_following_students):
     worst = valid_students[-1]
     worst['type'] = 'peor'
 
-    activity_col_idx = student_list[0]['col_idx']  # Assuming all students have the same col_idx for this activity
-    
     updated_abet_students = []
     for student in abet_following_students:
         matching_student = next((s for s in student_list if s['id'] == student['id']), None)
-        matching_student['type'] = student['type']  # Preserve the type from abet_following_students
-        updated_abet_students.append(matching_student)
+        matching_student_copy = matching_student.copy() 
+        matching_student_copy['type'] = student['type']  # Preserve the type from abet_following_students
+        updated_abet_students.append(matching_student_copy)
 
     selected = [best, worst] + updated_abet_students
     
