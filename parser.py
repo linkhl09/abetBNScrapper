@@ -1,22 +1,81 @@
 from bs4 import BeautifulSoup
 import re
 
+def _find_grades_table(soup):
+    """
+    Finds the Brightspace grades table and its header rows.
+    Returns (table, header_rows), or (None, []) if either can't be found.
+    """
+    table = soup.find('table', id='z_bk') or soup.find('table', class_=lambda x: x and 'd2l-grid' in x)
+    if not table:
+        print("Could not find the grades table.")
+        return None, []
+
+    header_rows = table.find_all('tr', class_=lambda x: x and 'd_gh' in x)
+    if not header_rows:
+        print("Could not find the grades table headers.")
+        return None, []
+
+    return table, header_rows
+
+
+def _extract_student_name_and_id(cells):
+    """
+    Given a grades-table row's <th>/<td> cells, extracts the student's display
+    name (2nd cell) and D2L userId (from the name link's onclick).
+    """
+    name_cell = cells[1]
+    name_anchor = name_cell.find('a', onclick=re.compile(r'gotoGradeUser'))
+    if not name_anchor:
+        full_name = name_cell.get_text(strip=True).replace("Ver progreso de", "").strip()
+    else:
+        full_name = name_anchor.get_text(strip=True)
+
+    student_id = "unknown"
+    if name_anchor and 'onclick' in name_anchor.attrs:
+        match = re.search(r'gotoGradeUserGroupSectionFilter\((\d+)', name_anchor['onclick'])
+        if match:
+            student_id = match.group(1)
+
+    return full_name, student_id
+
+
+def extract_course_roster(html_content):
+    """
+    Extracts every student's {name, id} from the Grades page, independent of
+    which (if any) configured activity columns matched. Used as the pool for
+    selecting the 3 random Seguimiento students even when a section has no
+    Grades-column ("assignment"/"quiz") activities to draw a pool from otherwise.
+    """
+    soup = BeautifulSoup(html_content, 'html.parser')
+
+    table, header_rows = _find_grades_table(soup)
+    if not table:
+        return []
+
+    student_rows = [row for row in table.find_all('tr') if row not in header_rows]
+
+    roster = []
+    for row in student_rows:
+        cells = row.find_all(['th', 'td'])
+        if len(cells) < 2:
+            continue
+        full_name, student_id = _extract_student_name_and_id(cells)
+        if full_name:
+            roster.append({"name": full_name, "id": student_id})
+
+    return roster
+
+
 def parse_grades_page(html_content, activities_config):
     """
     Parses the grades.html page source to extract student grades for configured activities.
     Returns a dictionary of activities mapping to a list of student dictionaries.
     """
     soup = BeautifulSoup(html_content, 'html.parser')
-    
-    table = soup.find('table', id='z_bk') or soup.find('table', class_=lambda x: x and 'd2l-grid' in x)
+
+    table, header_rows = _find_grades_table(soup)
     if not table:
-        print("Could not find the grades table.")
-        return {}
-        
-    header_rows = table.find_all('tr', class_=lambda x: x and 'd_gh' in x)
-    
-    if not header_rows:
-        print("Could not find the grades table headers.")
         return {}
 
     # Reconstruct column names
@@ -83,20 +142,9 @@ def parse_grades_page(html_content, activities_config):
         cells = row.find_all(['th', 'td'])
         if len(cells) < 2:
             continue
-            
-        name_cell = cells[1]
-        name_anchor = name_cell.find('a', onclick=re.compile(r'gotoGradeUser'))
-        if not name_anchor:
-            full_name = name_cell.get_text(strip=True).replace("Ver progreso de", "").strip()
-        else:
-            full_name = name_anchor.get_text(strip=True)
-             
-        student_id = "unknown"
-        if name_anchor and 'onclick' in name_anchor.attrs:
-            match = re.search(r'gotoGradeUserGroupSectionFilter\((\d+)', name_anchor['onclick'])
-            if match:
-                student_id = match.group(1)
-                
+
+        full_name, student_id = _extract_student_name_and_id(cells)
+
         for col_idx, act in activity_columns.items():
             if col_idx < len(cells):
                 cell = cells[col_idx]

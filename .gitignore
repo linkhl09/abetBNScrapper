@@ -1,13 +1,14 @@
 # Script related files to avoid uploading
 *.json
 !activitiesExample.json
+!seguimientoExample.json
 *.jpg
 *.jpeg
 *.xlsx
 *.csv
 
 # testing related files
-test/*
+test*/*
 
 
 # Byte-compiled / optimized / DLL files

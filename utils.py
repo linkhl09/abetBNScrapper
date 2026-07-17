@@ -45,6 +45,19 @@ def load_activities(json_path="activities.json") -> list[dict]:
             activities.append({"name": activity_name, "aliases": aliases})
         return activities
 
+def load_seguimiento_override(json_path="seguimiento.json"):
+    """
+    Loads the optional manual Seguimiento override file, if present. Expected
+    shape is a flat JSON array of 1-3 student name strings (in the same
+    "LastName, FirstName" format Brightspace's Grades page displays). Returns
+    the raw parsed value (shape validated by the caller) or None if the file
+    doesn't exist.
+    """
+    if not os.path.exists(json_path):
+        return None
+    with open(json_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
 def sanitize_filename(filename):
     """Removes invalid characters from a string to make it safe for filenames."""
     # Replace invalid chars with underscore
@@ -96,9 +109,9 @@ def select_students_for_activity(student_list, abet_following_students):
     
     updated_abet_students = []
     for student in abet_following_students:
-        student_copy = student.copy()
-        student_copy["col_idx"] = activity_col_idx
-        updated_abet_students.append(student_copy)
+        matching_student = next((s for s in student_list if s['id'] == student['id']), None)
+        matching_student['type'] = student['type']  # Preserve the type from abet_following_students
+        updated_abet_students.append(matching_student)
 
     selected = [best, worst] + updated_abet_students
     

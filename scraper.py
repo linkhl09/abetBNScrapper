@@ -8,9 +8,9 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.print_page_options import PrintOptions
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from utils import prompt_user_config, load_activities, select_students_for_abet, select_students_for_activity, extract_surnames, ensure_dir, normalize_student_name
+from utils import prompt_user_config, load_activities, load_seguimiento_override, select_students_for_abet, select_students_for_activity, extract_surnames, ensure_dir, normalize_student_name
 from web_utils import find_in_shadow, search_element_by_id, search_text_in_element_list
-from parser import parse_grades_page, parse_quiz_grading_page
+from parser import parse_grades_page, parse_quiz_grading_page, extract_course_roster
 from excel_utils import (
     add_sheet_with_table,
     append_array_to_table,
@@ -24,8 +24,10 @@ class D2LScraper:
     def __init__(self):
         self.config = prompt_user_config()
         self.activities_config = load_activities()
+        self.seguimiento_override = load_seguimiento_override()
         self._validate_groups_config()
         self._validate_activity_types()
+        self._validate_seguimiento_override()
 
         ensure_dir(self.config['root_folder'])
         
@@ -95,6 +97,41 @@ class D2LScraper:
                 print("Please remove the 'groupName' field or change the activity's type.")
                 print("Exiting program.")
                 exit()
+
+    def _validate_seguimiento_override(self):
+        if self.seguimiento_override is None:
+            return
+        is_valid = (
+            isinstance(self.seguimiento_override, list)
+            and len(self.seguimiento_override) == 3
+            and all(isinstance(n, str) and n.strip() for n in self.seguimiento_override)
+        )
+        if not is_valid:
+            print("Invalid 'seguimiento.json': expected a JSON array of 1 to 3 non-empty student name strings.")
+            print("Exiting program.")
+            exit()
+        print(f"Using manually-specified Seguimiento students from seguimiento.json: {self.seguimiento_override}")
+
+    def _build_seguimiento_from_override(self, course_roster: list):
+        tmp_abet_students = [
+            {"name": name, "type": f"Seguimiento_{index + 1}"}
+            for index, name in enumerate(self.seguimiento_override)
+        ] 
+        abet_students = []
+        for student in tmp_abet_students:
+            normalized_name = normalize_student_name(student["name"])
+            # This search makes that if the name in seguimiento.json is not exactly the same as in the course roster, it will still match if the normalized names are equal.
+            matched_student = next(
+                (s for s in course_roster if normalize_student_name(s["name"]) == normalized_name),
+                None
+            )
+            if matched_student:
+                abet_students.append({"name": matched_student["name"], "type": student["type"], "id": matched_student["id"]})
+            else:
+                print(f"[ERROR]: Student '{student['name']}' from seguimiento.json not found in course roster. Check the name before proceeding with execution. The program will close.")
+                exit()
+        
+        return abet_students 
 
     def _log_exception(self, context, exc) -> None:
         """Print detailed exception info that is useful for Selenium debugging."""
@@ -679,7 +716,7 @@ class D2LScraper:
         selected_students_list = [[activity_name, item.get("type"), item.get("name")] for item in selected]
         append_array_to_table(self.workbook, "selectedStudents", selected_students_list)
         for s in selected:
-            print(f"  [{s['type'].upper()}] {s['name']} (Grade: {s['grade']})")
+            print(f"  [{s['type'].upper()}] {s['name']}")
 
         for student in selected:
             source = by_name.get(normalize_student_name(student['name']))
@@ -716,16 +753,23 @@ class D2LScraper:
 
                 section_folder_name = f"section{section}" if section is not None else "section_all"
 
+                # abet_students is drawn from the full Grades-page roster (not just
+                # students appearing in a matched activity column) so it's populated
+                # even when a section has no "assignment"/"quiz" activities at all
+                # (e.g. only standalone_quiz activities configured). A manual
+                # seguimiento.json override, if present, always takes precedence.
+                course_roster = extract_course_roster(html_content)
+                if self.seguimiento_override:
+                    print("Using seguimiento.json override for abet students")
+                    abet_students = self._build_seguimiento_from_override(course_roster)
+                        
+                else:
+                    print("Selecting 3 students for abet following...")
+                    abet_students = select_students_for_abet(course_roster)
+
                 if not activity_data:
                     print("No grade-column activities found or failed to parse for this section.")
-                    abet_students = []
                 else:
-                    # Collect all students from all activities
-                    all_students = [student for activity_name, students in activity_data.items() for student in students]
-
-                    print("Selecting 3 students for abet following...")
-                    abet_students = select_students_for_abet(all_students)
-
                     print("\n--- Student Selection ---")
                     selected_students_by_activity = {}
                     for activity_name, students in activity_data.items():
@@ -757,10 +801,7 @@ class D2LScraper:
 
                 # Standalone quizzes never appear on the Grades page (parse_grades_page
                 # can't see them at all), so they're processed separately here, once per
-                # section, reusing this section's abet_students (possibly empty if this
-                # section had no grade-column activities at all) and output convention.
-                if not abet_students:
-                    print("[Warning] No abet_students available for this section; Seguimiento_1-3 will be empty for standalone quizzes.")
+                # section, reusing this section's abet_students and output convention.
                 for activity_config in self.activities_config:
                     if activity_config.get("type") == "standalone_quiz":
                         self.download_standalone_quiz_evidence(activity_config, abet_students, section_folder_name)

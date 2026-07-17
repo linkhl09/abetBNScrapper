@@ -7,7 +7,7 @@ For each configured activity (e.g., assignments, projects, workshops), the scrip
 - The **mejor** student submission (highest grade)
 - The **peor** student submission (lowest grade)
 
-It also randomly selects three additional students that will be used for ABET following and will be in all activities.
+It also randomly selects three additional students (drawn from the full course roster, not just students with grades on a configured activity) that will be used for ABET following and will be in all activities — the "Seguimiento" students. You can override this random selection and specify exactly which 3 students to track manually; see [Manually specifying Seguimiento students](#3-manually-specifying-seguimiento-students).
 
 It then programmatically navigates the D2L interface to download, organize, and rename these submissions into structured directories.
 
@@ -98,6 +98,19 @@ This option cannot be configured from the terminal as it requires that you downl
 
 Be sure to name the file as:  `Groups_<CourseCode>.xlsx` for example, the course "Introduccion a Ingenieria de Sistemas" with code ISIS1001, should be named `Groups_ISIS1001.xlsx`.
 
+### 3. Manually specifying "Seguimiento" students
+
+By default, the 3 ABET-following ("Seguimiento") students are chosen randomly from the full course roster (extracted from the Grades page), and used consistently across every activity in a section. If you'd rather choose exactly which students to track — for example to keep the same 3 students across multiple runs, or because a section has no Grades-column activities to draw a roster from at all — create an optional `seguimiento.json` file in the same directory:
+
+```json
+[
+  "Vargas Garzon, Jefferson", 
+  "Rueda Rodriguez, Sandra Julieta", 
+  "Ariza Gacharna, Juan Andres"
+]
+```
+
+A flat JSON array of 1 to 3 student names, in the same "LastName, FirstName" format Brightspace's Grades page displays. When this file is present, it **always** takes precedence over random selection — for every section, every run — labeled `Seguimiento_1`/`_2`/`_3` in the order given. Delete or rename the file to go back to random selection.
 
 ---
 
@@ -136,6 +149,8 @@ The script will automatically navigate to your course page and enter the **Grade
 
 For each section you specified the script will take over, select the target students, open each submission page in a new tab, download their files directly to the proper folder, rename them, and close the tabs.
 
+After this if `standalone_quiz` activities were configured, it will navigate to the "Cuestionarios" view and start downloading the pdfs.
+
 ---
 
 ## Output Folder Structure
@@ -149,9 +164,9 @@ Downloads are automatically organized into folders structured as follows:
     │   ├── <activity_name_A>/
     │   │   ├── mejor-LastName_FirstName.pdf
     │   │   ├── peor-LastName_FirstName.zip
-    │   │   ├── random-LastName_FirstName_1.pdf
-    │   │   ├── random-LastName_FirstName_2.pdf
-    │   │   └── random-LastName_FirstName_3.pdf
+    │   │   ├── Seguimiento_1-LastName_FirstName.pdf
+    │   │   ├── Seguimiento_2-LastName_FirstName.pdf
+    │   │   └── Seguimiento_3-LastName_FirstName.pdf
     │   └── <activity_name_B>/
     │       └── ...
     └── section2/
@@ -160,7 +175,7 @@ Downloads are automatically organized into folders structured as follows:
 
 _Note: If multiple files are uploaded for a single submission, they will be saved with a `_1`, `_2` index suffix._
 
-_Note: The file extension depends on the activity's `type`: regular activities produce `.zip` files with the student's uploaded submission, while `"type": "quiz"` activities produce a `.pdf` of the student's most recent quiz attempt instead._
+_Note: The file extension depends on the activity's `type`: regular activities produce `.zip` files with the student's uploaded submission, while `"type": "quiz"` or `"type": "standalone_quiz"` activities produce a `.pdf` of the student's most recent quiz attempt instead._
 
 ## About the groups
 
